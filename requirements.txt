@@ -1,0 +1,16 @@
+# AI CUP 2026 春季賽 — 基於時序資料之桌球戰術與結果預測競賽
+# TEAM_10297 deliverable dependencies
+#
+# Verified Python: 3.12.3
+# Verified CUDA  : 13.0 (NVIDIA RTX 4090)
+# Lower-bound version pins are sufficient; newer minors should also work.
+
+torch>=2.4.0
+numpy>=1.26.0
+pandas>=2.2.0
+scikit-learn>=1.5.0
+xgboost>=2.0.0
+catboost>=1.2.0
+
+# Optional (already in stdlib but listed for clarity)
+# - argparse, hashlib, pathlib, time, sys, itertools (Python stdlib)
