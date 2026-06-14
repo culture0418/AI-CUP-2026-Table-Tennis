@@ -61,37 +61,37 @@ CPU-only 模式可運作但 bag training 將大幅變慢(預估 > 24 小時)。
 
 ## 資料
 
-本系統使用 **3 個競賽提供資料檔** + **1 個競賽核可外部資料集**。請將檔案放置如下:
+本繳交包**已內附全部所需資料**(總大小僅 ~8 MB,可直接執行):
 
 ```
 data/
-├── train.csv                          ← 主辦提供:訓練集 (14,995 rallies)
-├── test_new.csv                       ← 主辦提供:測試集 (1,845 rallies, 無 serverGetPoint)
-├── test.csv                           ← 主辦提供:Reference_Only_Old_Test_Data (1,236 rallies 含 serverGetPoint)
+├── train.csv                          主辦提供:訓練集 (14,995 rallies, 3.7 MB)
+├── test_new.csv                       主辦提供:測試集 (1,845 rallies, 248 KB)
+├── test.csv                           主辦提供:Reference_Only_Old_Test_Data (1,236 rallies 含 serverGetPoint, 164 KB)
+├── dataset_description.md             欄位定義
 └── external/
     └── shuttleset22/
-        └── train.csv                  ← 外部:ShuttleSet22 羽球資料(SSL pretrain 用)
+        └── train.csv                  外部:ShuttleSet22 羽球資料 (3.8 MB, CoachAI Projects)
 ```
 
-`dataset_description.md` 內含各欄位定義。
+### 資料來源與授權
 
-### 外部資料下載
+| 檔案 | 來源 | 授權 |
+|---|---|---|
+| `train.csv` / `test_new.csv` | AI CUP 2026 春季賽競賽平台 | 競賽授權 |
+| `test.csv` | 主辦單位 2026-05-21 公告開放(Reference_Only_Old_Test_Data) | 主辦明確允許作訓練資料 |
+| `external/shuttleset22/train.csv` | [CoachAI-Projects](https://github.com/wywyWang/CoachAI-Projects) (Wang et al. 2023) | 原 repo 授權 |
 
-**ShuttleSet22** (CoachAI Projects, Wang et al. 2023):
+### 資料完整性 MD5
 
-```bash
-git clone https://github.com/wywyWang/CoachAI-Projects.git
-# 將其中 ShuttleSet22 的 train.csv 複製到 data/external/shuttleset22/
+```
+3aa1f55b6178461c870bb138c59a3b68  data/train.csv
+8c49a01f8428291623efc33c2e8df399  data/test_new.csv
+6008387d786c9f3b29d2a3f9d039ecbb  data/test.csv
+37e7e4fb0e087d0e1581d67ad4d0f947  data/external/shuttleset22/train.csv
 ```
 
-或直接到 [`https://github.com/wywyWang/CoachAI-Projects`](https://github.com/wywyWang/CoachAI-Projects) 下載對應 release。
-
-### 資料完整性檢查
-
-```bash
-ls -la data/train.csv data/test_new.csv data/test.csv data/external/shuttleset22/train.csv
-# 應有 4 個檔案
-```
+可用 `md5sum data/*.csv data/external/shuttleset22/*.csv` 驗證。
 
 ---
 
