@@ -5,12 +5,15 @@
 
 **隊伍：TEAM_10297**
 
+**隊員：** Culture（隊長）
 
-**Public Leaderboard：** 0.4472604 
+**指導教授：** 無
 
-**Private Leaderboard：** 0.3682964
+**Public Leaderboard：** 0.4472604 / Rank 15（截至 2026-05-29）
 
-**是否有意願參與 2026 IEEE International Conference on Big Data Workshops 發表：** 是
+**Private Leaderboard：** _（待主辦單位公布後填入）_
+
+**是否有意願參與 2026 IEEE International Conference on Big Data Workshops 發表：** ☐ 是　☐ 否
 
 ---
 
@@ -413,7 +416,9 @@ python scripts/v27_oldleak_full_pipeline.py --skip-ssl --skip-bag
 
 **最具教育意義者為 V38**。它是這 5 次裡**唯一通過 bag 濾網的新架構**：single-seed +0.0070、10-seed bag +0.0047（F1_a 0.4094 為所有 bag 最高,+0.0087 **bag-stable** 非噪音）、frozen-α OOF +0.0031。然而它的 LB 卻崩到 0.4276548,為史上最大架構崩盤。
 
-**[圖 1：V38 完整鏈條 single-seed → bag → frozen-α OOF → LB 反轉示意圖]**
+**圖 1：V38 完整鏈條 single-seed → bag → frozen-α OOF → LB 反轉**
+
+![Fig 1](figures/fig1_v38_chain.png)
 
 更深一層的診斷（`scripts/v38_residual_blend_sweep.py`）顯示：若以 baseline threshold 不 retune,V38 ensemble 的 OOF gain 自 λ=0.05 起就轉負且越大越負——**證明那個 +0.0031 OOF 主要來自 threshold retune 過擬合,而非 V38 真實的訊號**。
 
@@ -434,7 +439,9 @@ python scripts/v27_oldleak_full_pipeline.py --skip-ssl --skip-bag
 1. **best 在 action/point 上接近 local optimum**,任何分歧空間統計上淨負。
 2. **flip% 是比 OOF 更可靠的 LB 風險訊號**——V38 之 action 12.09% / point 15.23% flips 即可預測其崩盤幅度。
 
-**[圖 2：Flip 數 vs LB 損失散布圖,展示單調相關性]**
+**圖 2：Flip 數與 LB 損失單調相關,且每 flip 損失隨架構新穎度遞增**
+
+![Fig 2](figures/fig2_flip_vs_lb.png)
 
 ### 6.5 Action/point 後處理空間完全耗盡
 
@@ -462,19 +469,27 @@ python scripts/v27_oldleak_full_pipeline.py --skip-ssl --skip-bag
 
 ### 6.7 成功案例（圖示說明）
 
-**[圖 3：成功案例 — V25-A 對 cold-start 球員的預測對照]**
-顯示一個 43.7% cold-start 球員對的 rally,V3 baseline 預測錯誤,V25-A 因 opp-pair ctx 編碼了 LOO 統計而修正為正確 actionId 與 pointId 的範例。
+**圖 3：成功案例 — V25-A 相對 V3-LSTM baseline 在 action head 各類別 F1 的提升**
+SSL + opp-pair LOO context 帶來絕大多數 class 的 F1 提升,尤其是 class 5/9/10/12 等中段稀有類別,對 cold-start 球員依然 robust。
 
-**[圖 4：成功案例 — AsymSpatial loss 對 class 3 的稀有類別效果]**
-展示一個訓練資料 class 3 樣本的 logit 分布,對比 V25-A（FocalLoss）與 V27（AsymSpatialFocalLoss）的 softmax——V27 對 class 2 與 class 6 保留更多機率質量,體現「相鄰落點戰術可替代」的設計意圖。
+![Fig 3](figures/fig3_v25a_vs_v3_per_class.png)
+
+**圖 4：AsymSpatial Focal Loss 對 class 3 的 label distribution 編碼**
+V25-A 用 uniform label smoothing(class 3 標籤 90% 集中,其他 8 類各 1.1%);V27 改用 AsymSpatial smoothing(class 3 標籤 80%,空間鄰居 class 2、6 各 7.5%,其他 5%/6 分),把「9 宮格相鄰落點戰術上可替代」的桌球知識直接編碼進損失函數。
+
+![Fig 4](figures/fig4_asym_spatial_loss.png)
 
 ### 6.8 失敗案例（圖示說明）
 
-**[圖 5：失敗案例 — V38 在 NEW-only cold-start match 上的 action 預測偏差]**
-取一個 V38 action-only submission 上的 cold-start match,展示 V38 與 V27 對相同 rally 的 action 預測分布——V38 在 OOF 上 confidently 偏向某類別,但 ground truth 顯示 V27 才對。
+**圖 5：失敗案例 — V38 per-class action F1 deltas vs V27**
+雖然 V38 aggregate F1_a 比 V27 高 +0.0087,但 per-class 顯示 V38 在多個 class 微幅勝出,在 class 14 卻劇烈下挫 -0.082。這種「為微幅整體提升而犧牲個別 class」的 divergent probability surface,正是它在 609 個 NEW-only OOD test rallies 上崩 -0.0196 的機制。
 
-**[圖 6：失敗案例 — Consensus 反向證明示意圖]**
-取一個多模型一致反對 best 的 OOF rally,顯示 V25A60/V27-60/V37/V38 的預測一致為某 c ≠ base,但 ground truth 正是 base 預測值。
+![Fig 5](figures/fig5_v38_perclass_delta.png)
+
+**圖 6：失敗案例 — Consensus 反向證明**
+以失敗模型(V25A60/V27-60/V37/V38)作為「錯誤偵測器」,要求至少 k 個模型一致反對 best 才 flip。結果:**所有 (head, k) 組合 OOF 都為負,連 k=4 全部一致都是負**。前提反向——失敗模型集體反對 best 之處,正是 best 對的地方。
+
+![Fig 6](figures/fig6_consensus_inversion.png)
 
 ### 6.9 未來改進方向
 
@@ -493,7 +508,7 @@ python scripts/v27_oldleak_full_pipeline.py --skip-ssl --skip-bag
 
 ## 柒、程式碼
 
-**GitHub 連結：** _（請於繳交前填入 public repository 連結）_
+**GitHub 連結：** https://github.com/culture0418/AI-CUP-2026-Table-Tennis
 
 **主要檔案結構：**
 
