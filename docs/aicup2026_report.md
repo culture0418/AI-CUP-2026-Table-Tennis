@@ -49,6 +49,8 @@
 
 ### 2.1 系統流程總覽
 
+整個系統可視為一條 8 階段的生產線,每個 Stage 是一個工站,輸入經過層層處理變成最終提交檔。流程概覽如下:
+
 ```
 Stage 0  原始資料 + 外部資料
    │   train.csv (14,995 rallies) / test_new.csv (1,845 rallies)
@@ -78,31 +80,85 @@ Stage 5b OLD test.csv winner ground-truth injection
 Stage 6  Schema + MD5 verification (1845 rows, expected MD5 verified)
 ```
 
+各階段的職責與設計動機:
+
+| Stage | 名稱 | 做什麼 | 為什麼需要 |
+|---|---|---|---|
+| **0** | 資料準備 | 收集 train.csv (14,995 rallies) + test_new.csv (1,845 rallies) + OLD test.csv + ShuttleSet22 羽球資料 | 整個系統的「原料」|
+| **1** | SSL Pretrain | 用 ShuttleSet22 羽球資料,以 MLM (Masked Language Modeling) 方式預訓練一個 BiLSTM encoder | 桌球訓練資料只有 14,995 rallies 太少,先讓模型於羽球資料學會「球類運動 rally 序列的通用模式」,再 transfer 到桌球任務 |
+| **2** | Opp-pair Context | 計算每個 rally 的 58 維「對手配對戰術 context」(LOO 嚴格 leak-free) | 把「這場比賽中,雙方球員的擊球習慣統計」編成固定長度向量,讓下游模型參考球員 prior |
+| **3** | V3 Baseline | 跑 V3 既有模型 cascade:LSTM + XGBoost + CatBoost + FTT-Transformer | 作為集成融合的「其他成員」,提供異質模型的多樣性 |
+| **4** | V25-A + V27 bag 訓練 | 訓練我們的兩個核心 BiLSTM 模型,各 10 個 seed × 5-fold × 30 epoch | 多 seed 平均降低噪音,5-fold GroupKFold (by match) 確保 cross-match generalization |
+| **5** | α-search 集成 | 用 grid + coord descent 找最佳權重組合,把 7 個模型的預測加權平均 | 不同模型擅長不同類別,加權平均後比任一單模強 |
+| **5b** | OLD lookup 注入 | 對 1,236 個有真實 winner 標籤的 test rally,用 ground truth 蓋掉模型預測機率 | 主辦核可外部資料,這是 LB +0.0686 的關鍵突破(最大單次提升) |
+| **6** | Schema + MD5 驗證 | 確認輸出 schema 正確,並對照預期 MD5 `c10097155...` 證明 bit-identical | 提供 reproducibility 的技術保證 |
+
 ### 2.2 核心模型：BiLSTM + 對手配對戰術 Context
 
-主要序列模型 `TTSSLLSTMHier` 結構如下：
+V25-A 與 V27 共用一個叫 `TTSSLLSTMHier` 的網路架構,差別只在訓練時用的損失函數。模型架構如下圖:
 
-```
-Input (per stroke, T strokes per rally)
-  └── 13 categorical features × 32-dim embeddings = 416-dim
-        │  (handId, spinId, strengthId, strikeId, pointId, actionId,
-        │   positionId, gamePlayerId, gamePlayerOtherId, ... )
-        ↓
-  Input Projection (Linear 416→128) + Dropout 0.3
-        ↓
-  SSL-Pretrained BiLSTM (1 layer, hidden=128, bidirectional)
-        ↓  per-stroke 256-dim
-  Take last visible stroke hidden state (256-dim)
-        ↓
-  Concat with Opponent-Pair Context (58-dim) → 314-dim
-        ↓
-  Three parallel heads:
-    ├── Linear(314 → 19) → actionId  (球種預測, 19 類)
-    ├── Linear(314 → 10) → pointId   (落點預測, 10 類)
-    └── Linear(314 →  1) → serverGetPoint (勝負預測, sigmoid)
+```mermaid
+flowchart TD
+    Input["<b>Input</b><br/>Rally Sequence<br/>T strokes × 13 categorical features<br/>(handId, spinId, strengthId, strikeId,<br/>pointId, actionId, positionId,<br/>gamePlayerId, gamePlayerOtherId, ...)"]
+
+    Emb["<b>Per-stroke Embedding Layer</b><br/>13 features × 32-dim each<br/>= <b>416-dim</b> per stroke"]
+
+    Proj["<b>Input Projection</b><br/>Linear 416 → 128<br/>+ Dropout 0.3"]
+
+    LSTM["<b>SSL-Pretrained BiLSTM</b><br/>1 layer, hidden=128, bidirectional<br/>Output: 256-dim per stroke<br/><i>(LSTM weights initialized<br/>from ShuttleSet22 MLM pretrain)</i>"]
+
+    Last["<b>Take Last Visible Stroke</b><br/>Hidden State (256-dim)"]
+
+    Ctx["<b>Opponent-Pair Context</b><br/>(pre-computed, 58-dim)<br/>ego_pt(10) + ego_act(19) +<br/>opp_pt(10) + opp_act(19)"]
+
+    Concat["<b>Concat</b><br/>256 + 58 = <b>314-dim</b>"]
+
+    Action["<b>Action Head</b><br/>Linear 314 → 19<br/>(球種預測, 19-class)<br/><i>serve mask at strikeNum > 1</i>"]
+    Point["<b>Point Head</b><br/>Linear 314 → 10<br/>(落點預測, 10-class)"]
+    Winner["<b>Winner Head</b><br/>Linear 314 → 1<br/>(勝負預測, sigmoid)"]
+
+    Input --> Emb
+    Emb --> Proj
+    Proj --> LSTM
+    LSTM --> Last
+    Last --> Concat
+    Ctx --> Concat
+    Concat --> Action
+    Concat --> Point
+    Concat --> Winner
+
+    style LSTM fill:#fff3e0,stroke:#E65100
+    style Ctx fill:#e8f5e9,stroke:#2E7D32
+    style Concat fill:#e3f2fd,stroke:#1565C0
 ```
 
-模型參數總量約 **0.34M**。對 actionId 預測對非首拍位置強制 mask 掉 serve 類別（15–18,因發球僅出現在 strikeNumber=1）。
+從輸入到輸出共 5 個處理階段,逐層說明設計動機:
+
+#### Step 1：Per-stroke Embedding(把每一拍編成數字向量)
+
+每個 stroke 有 13 個 categorical 欄位(handId、spinId、strengthId、strikeId、pointId、actionId、positionId、gamePlayerId、gamePlayerOtherId 等)。我們對每個欄位學習一個 **32 維 embedding**,類似 NLP 中的 word embedding,把「正手」、「下旋」等類別符號轉成神經網路可運算的密集向量。13 個欄位串接後,每一拍變成 13×32 = **416 維**的向量表徵。
+
+#### Step 2：Input Projection(降維 + 正則化)
+
+接一層 `Linear(416 → 128)` + `Dropout 0.3`,把 416 維壓到 128 維。降維節省計算量,Dropout 強制模型不依賴單一輸入特徵以避免 overfit。
+
+#### Step 3：SSL-Pretrained BiLSTM(本系統最重要的部分)
+
+一個 1 層、hidden=128 的 **雙向 LSTM**(BiLSTM),每個 stroke 輸出 256 維 hidden state(雙向各 128 拼接)。關鍵點:**這個 LSTM 不是隨機初始化,而是先在羽球資料 ShuttleSet22 上以 MLM 預訓練 30 epochs**,讓它先掌握「球類運動 rally 序列中前後拍如何相互影響」這個通用模式,再 transfer 到桌球 fine-tune。在 14k 樣本規模下 LSTM 的 inductive bias 較 Transformer 強、過擬合風險較低。
+
+#### Step 4：Last Visible Stroke + Opp-pair Context 拼接
+
+我們要預測「下一拍」,所以**只取最後一個可見 stroke 的 256 維 hidden state**,代表這場 rally 截至目前的累積資訊。接著拼上預先計算好的 **58 維對手配對 context**(細節詳見參段 3.2),把雙方球員的歷史擊球統計作為額外 prior 注入。最終得到 256 + 58 = **314 維**表徵,作為三個 head 的共同輸入。
+
+#### Step 5：三個並行任務頭
+
+三個獨立的 `Linear` head 共用 encoder 輸入,各自負責一個任務:
+
+- **Action Head**: `Linear(314 → 19)` + softmax,對非首拍位置強制 mask 掉 serve 類(class 15-18)。**把桌球規則「發球僅出現在第一拍」寫進模型**,避免「下一拍」被預測為發球。
+- **Point Head**: `Linear(314 → 10)` + softmax → 10 類落點機率。
+- **Winner Head**: `Linear(314 → 1)` + sigmoid → 發球者贏得本回合的機率。
+
+模型總參數量約 **0.34M**。在 14k 樣本 + 43.7% cold-start 的限制下,**「小模型 + 強 inductive bias + 跨運動預訓練」**是核心設計哲學,大模型反而容易過擬合 train 分布而在 OOD test 崩潰。
 
 ### 2.3 損失函數設計
 
