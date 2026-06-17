@@ -1,13 +1,44 @@
 # AI CUP 2026 春季賽 — TEAM_10297
 
-**競賽**: 基於時序資料之桌球戰術與結果預測競賽
-**Public LB**: 0.4472604 (Rank 15 / 365, 截至 2026-05-29)
-**Submission MD5**: `c10097155c0942354f81ea188b43f111`
-**Entry point**: `scripts/run_full_pipeline.py`
+> 基於時序資料之桌球戰術與結果預測競賽
 
-本繳交包含完整重現公開排行榜 0.4472604 提交檔所需的全部程式碼、依賴版本、cache 與重現指令。所有程式碼按功能拆分為 `src/` 內模組,審查者只需執行 `scripts/run_full_pipeline.py` 一個入口即可端到端跑完。
+## 🏆 Key Results
 
-對應之競賽報告請見 [`docs/aicup2026_report.md`](docs/aicup2026_report.md)。
+| 指標 | 數值 |
+|---|---|
+| **Public Leaderboard 分數** | **0.4472604** |
+| **Public Rank** | **24 / 365** |
+| **Private Leaderboard 分數** | **0.3682964** |
+| **Private Rank** | **32 / 365** |
+| **OOF Final**(集成前) | 0.3869 (F1_a 0.4269 / F1_p 0.2303 / AUC 0.6200) |
+| **LB 累積提升** | V3 baseline 0.3649 → **0.4472604** (+0.0823) |
+
+### LB 進展時間軸
+
+| 日期 | 版本 | LB | Δ | 關鍵新機制 |
+|---|---|---|---|---|
+| 2026-05-05 | V3 baseline | 0.3649 | — | LSTM + XGB + Cat + FTT cascade |
+| 2026-05-08 | v12 | 0.3702 | +0.0053 | ShuttleSet22 跨運動 SSL pretrain |
+| 2026-05-09 | v17 | 0.3747 | +0.0046 | Asym loss + transductive aug |
+| 2026-05-19 | V25-A | 0.3757 | +0.0010 | 58 維對手配對 LOO ctx |
+| 2026-05-20 | V27 Mode A | 0.3787 | +0.0030 | AsymSpatial loss (class 3 空間平滑) |
+| **2026-05-25** | **v27_oldleak** ⭐ | **0.4472604** | **+0.0686** | **OLD test.csv winner lookup**(主辦核可) |
+
+### 核心創新點(七項)
+
+1. **跨運動 SSL 遷移** — 羽球(ShuttleSet22)→ 桌球 MLM pretrain,LB +0.0044
+2. **對手配對 LOO Context** — 58 維 ego/opp 戰術歷史,確定性非參數,leak-free
+3. **AsymSpatial Focal Loss** — 把桌球 9 宮格空間拓撲編碼進損失函數
+4. **V27 Mode A 雙取代集成** — 同架構雙 loss objective diversity
+5. **Transductive Augmentation** — test rallies (T≥2) 入訓練集 (OOF +0.0004 → LB +0.0032, transfer 8x)
+6. **Winner head α-search 優化** — V3-Cat + v1 SSL-LSTM 融合
+7. **主辦核可外部資料合規利用** — OLD test.csv 1,236 winner ground truth lookup
+
+---
+
+**Entry point**: `scripts/run_full_pipeline.py` — 單一指令端到端執行 6 階段流程
+**對應報告**: [`docs/aicup2026_report.md`](docs/aicup2026_report.md)
+**程式碼結構**: `src/` 8 個模組(config, data_processing, models, losses, pretrain, training, ensemble, validation, figures)按功能拆分
 
 ---
 
@@ -40,9 +71,9 @@
 ### 安裝步驟
 
 ```bash
-# 1. 解壓縮並進入目錄
-unzip aicup2026_deliverable.zip
-cd aicup2026_deliverable
+# 1. Clone repo (含全部程式碼、資料、cache, ~310 MB)
+git clone https://github.com/culture0418/AI-CUP-2026-Table-Tennis.git
+cd AI-CUP-2026-Table-Tennis
 
 # 2. 建立 Python 虛擬環境
 python3 -m venv venv

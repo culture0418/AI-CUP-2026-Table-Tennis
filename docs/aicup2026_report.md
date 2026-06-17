@@ -9,9 +9,9 @@
 
 **指導教授：** 無
 
-**Public Leaderboard：** 0.4472604 / Rank 15（截至 2026-05-29）
+**Public Leaderboard：** 0.4472604 / Rank 24
 
-**Private Leaderboard：** _（待主辦單位公布後填入）_
+**Private Leaderboard：** 0.3682964 / Rank 32
 
 **是否有意願參與 2026 IEEE International Conference on Big Data Workshops 發表：** ☐ 是　☐ 否
 
@@ -504,7 +504,7 @@ V25-A 用 uniform label smoothing(class 3 標籤 90% 集中,其他 8 類各 1.1%
 
 ### 6.10 總結
 
-本系統以「跨運動 SSL + 桌球戰術知識編碼 + 主辦核可外部資料合規利用」三軸機制,於公開 Leaderboard 達成 0.4472604（rank 15/365,截至 2026-05-29）。同時,我們建立了一套**嚴謹的負結果驗證方法論**,完整記錄 31+ 條失敗探索（含 5 次架構整合 LB 崩盤）,並以 forensic flip-to-LB 分析揭示「在小資料 + cold-start 任務上,bag-validated standalone improvement 不必然 transfer」的核心結構性洞察。雖然這些 dead-ends 未直接貢獻 LB,但其方法論價值與對未來研究的指引,構成本報告的核心學術貢獻之一。
+本系統以「跨運動 SSL + 桌球戰術知識編碼 + 主辦核可外部資料合規利用」三軸機制,於公開 Leaderboard 達成 **0.4472604 (rank 24/365)**, private Leaderboard 達成 **0.3682964 (rank 32/365)**。同時,我們建立了一套**嚴謹的負結果驗證方法論**,完整記錄 31+ 條失敗探索（含 5 次架構整合 LB 崩盤）,並以 forensic flip-to-LB 分析揭示「在小資料 + cold-start 任務上,bag-validated standalone improvement 不必然 transfer」的核心結構性洞察。雖然這些 dead-ends 未直接貢獻 LB,但其方法論價值與對未來研究的指引,構成本報告的核心學術貢獻之一。
 
 ---
 
