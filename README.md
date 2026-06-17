@@ -42,8 +42,52 @@
 
 ---
 
+## 模型架構
+
+V25-A 與 V27 共用同一個 `TTSSLLSTMHier` 網路(差別僅在訓練損失函數):
+
+```mermaid
+flowchart TD
+    Input["<b>Input</b><br/>Rally Sequence<br/>T strokes × 13 categorical features<br/>(handId, spinId, strengthId, strikeId,<br/>pointId, actionId, positionId,<br/>gamePlayerId, gamePlayerOtherId, ...)"]
+
+    Emb["<b>Per-stroke Embedding Layer</b><br/>13 features × 32-dim each<br/>= <b>416-dim</b> per stroke"]
+
+    Proj["<b>Input Projection</b><br/>Linear 416 → 128<br/>+ Dropout 0.3"]
+
+    LSTM["<b>SSL-Pretrained BiLSTM</b><br/>1 layer, hidden=128, bidirectional<br/>Output: 256-dim per stroke<br/><i>(LSTM weights initialized<br/>from ShuttleSet22 MLM pretrain)</i>"]
+
+    Last["<b>Take Last Visible Stroke</b><br/>Hidden State (256-dim)"]
+
+    Ctx["<b>Opponent-Pair Context</b><br/>(pre-computed, 58-dim)<br/>ego_pt(10) + ego_act(19) +<br/>opp_pt(10) + opp_act(19)"]
+
+    Concat["<b>Concat</b><br/>256 + 58 = <b>314-dim</b>"]
+
+    Action["<b>Action Head</b><br/>Linear 314 → 19<br/>(球種預測, 19-class)<br/><i>serve mask at strikeNum > 1</i>"]
+    Point["<b>Point Head</b><br/>Linear 314 → 10<br/>(落點預測, 10-class)"]
+    Winner["<b>Winner Head</b><br/>Linear 314 → 1<br/>(勝負預測, sigmoid)"]
+
+    Input --> Emb
+    Emb --> Proj
+    Proj --> LSTM
+    LSTM --> Last
+    Last --> Concat
+    Ctx --> Concat
+    Concat --> Action
+    Concat --> Point
+    Concat --> Winner
+
+    style LSTM fill:#fff3e0,stroke:#E65100
+    style Ctx fill:#e8f5e9,stroke:#2E7D32
+    style Concat fill:#e3f2fd,stroke:#1565C0
+```
+
+模型總參數量約 **0.34M**,核心設計哲學為「**小模型 + 強 inductive bias + 跨運動預訓練**」,適應 14k 樣本 + 43.7% cold-start 的限制。逐層設計動機詳見 [`docs/aicup2026_report.md` § 2.2](docs/aicup2026_report.md)。
+
+---
+
 ## 目錄
 
+- [模型架構](#模型架構)
 - [運行環境](#運行環境)
 - [資料](#資料)
 - [檔案結構](#檔案結構)
