@@ -365,7 +365,7 @@ Best-epoch selection:
 
 ### 5.3 Transductive Augmentation 整合
 
-每個 fold 訓練前,將 `[r for r in all_test if r.T >= 2]` 共 1,337 個 rally **加入 training set**（labels: actions[k], points[k] 採用 k-sampling 抽出之位置）。實際 transductive aug 不引入 test 真實標籤,僅利用 input sequence 結構,讓 encoder 在訓練階段接觸測試球員的擊球風格分布,降低 cold-start 推論時的分布偏移。此設計屬於合法的 transductive learning,與 pseudo-label 機制本質不同。
+每個 fold 開始訓練前,先從測試集 test_new.csv 篩選出**可見至少 2 拍的 rally(共 1,337 個)**加入訓練集。訓練時用 4.4 段的 k-sampling 抽切點 k,以「第 k 拍的球種與落點」作為訓練目標——這個目標來自 test rally 的**可見前綴**(每位參賽者都看得到的資料),**不是 test 集隱藏的下一拍答案**,因此不違反「禁反查 test 答案」的比賽規則,屬於合法的 transductive learning。此設計讓 encoder 在訓練階段接觸測試球員的擊球風格分布,降低 cold-start 推論偏移。這跟 pseudo-label 機制(用模型自己對 test 的預測當假標籤訓練)本質不同。
 
 ### 5.4 V3 Baseline Cascade（沿用 v12 既有實作）
 
@@ -377,29 +377,17 @@ V3 baseline 為較早期建立、提供集成 diversity 之 cascade 模型：
 
 ### 5.5 Stage 5 集成搜尋
 
-```
-Action 7-way α-search:
-  Grid search step=0.1, coord descent step=0.05
-  Target: maximize macro F1_a on OOF
-  
-Point 8-way α-search:
-  Two-init strategy (v16_init + grid-init), pick max
-  Coord descent on both, take best F1_p
-  
-Winner 4-way α-search:
-  Grid step=0.05, target AUC
-  
-Per-class threshold tune:
-  Multiplier grid [0.5, 5.0] step 0.05
-  Cap ratio 0.75 (防 overfit)
-  Iterate up to 4 rounds, accept if F1 +1e-6
-```
+Stage 5 把多個已訓練好的模型 **bag**(同一架構用 10 個 random seed 重複訓練後,把 OOF 與 test 機率預測平均的集合,用以降低單一 seed 噪音)合在一起,用 OOF 分數搜尋最佳融合權重。權重搜尋(α-search)採**兩階段策略**:先以粗 grid search(步長 0.1)定位最佳區域,再以 coordinate descent(步長 0.05)逐步逼近最佳組合,降低高維搜索空間 local optimum 的風險。
 
-整段 stage 5 於 cached bag 條件下約 1-2 分鐘完成（CPU,無 GPU 訓練）。我們對 α-search 採用「粗 grid + 細 coord descent」二階段策略,降低高維 simplex 上的 local optimum 風險,同時將 threshold multiplier 限制在 cap=0.75 區間內,避免訓練集 noise 被過度放大。
+三個任務頭分別搜尋:**球種**用 7 個模型加權,目標最大化 macro F1;**落點**用 8 個模型加權,試兩種起點取最佳;**勝負**用 4 個模型加權,目標最大化 AUC。
+
+α 權重決定後,對每個 class 再 tune 一個 threshold 倍數(per-class threshold multiplier),機率乘上倍數後 argmax 決定預測。**為避免單一稀有類別的倍數被過度推高造成過擬合**,我們設一個「**上限 cap 0.75**」——把所有 class 倍數的擺動範圍向中位數壓縮 25%(只保留 75% 原始幅度),避免訓練集 noise 被放大到 test 集。
+
+整個 Stage 5 於已存好的 bag 條件下約 1-2 分鐘即可完成,無需 GPU。
 
 ### 5.6 訓練穩定性與監控
 
-訓練過程中監控三項指標：(1) 每個 epoch 的 fold-level 驗證 Final score,確認 SSL 初始化的優勢隨 epoch 累積、避免被破壞;(2) 跨 seed 的 best-epoch 分布,若集中於前 5 epoch 表示模型 underfit、若集中於最後 5 epoch 表示過長。實測 V25-A 與 V27 bag 的 best-epoch 多落於 15–25 區間,確認 30 epoch 為合適長度。(3) gradient norm,當 norm > 5 時觸發 clip 並記錄,協助偵測異常 batch。
+訓練過程中監控三項指標:(1) 每個 epoch 的 fold-level 驗證 Final score,確認 SSL 初始化的優勢隨 epoch 累積;(2) 跨 seed 的 best-epoch 分布——實測 V25-A 與 V27 bag 多落於 15–25 區間,確認 30 epoch 為合適長度;(3) gradient norm > 5 時觸發 clip,協助偵測異常 batch。
 
 ### 5.7 重現流程
 
@@ -449,7 +437,7 @@ python scripts/run_full_pipeline.py --skip-ssl --skip-bag
 
 ### 6.3 五次架構整合崩盤的核心 lesson
 
-本任務在 14k train + 43.7% cold-start + 55 個沒見過 match 的測試條件下,**任何架構新穎度都是 transfer 的負債而非資產**。我們進行了 5 次獨立的「新架構整合進 V27 Mode A ensemble」嘗試,**全部 LB 大幅負向**：
+本任務在 14k train + 43.7% cold-start + 55 個沒見過 match 的測試條件下,我們進行了 5 次獨立的「新架構整合進 V27 Mode A ensemble」嘗試,**全部 LB 大幅負向**：
 
 | 嘗試 | 機制 | OOF Δ | LB Δ | 放大倍率 |
 |---|---|---|---|---|
@@ -465,11 +453,11 @@ python scripts/run_full_pipeline.py --skip-ssl --skip-bag
 
 ![Fig 1](figures/fig1_v38_chain.png)
 
-更深一層的診斷（`scripts/v38_residual_blend_sweep.py`）顯示：若以 baseline threshold 不 retune,V38 ensemble 的 OOF gain 自 λ=0.05 起就轉負且越大越負——**證明那個 +0.0031 OOF 主要來自 threshold retune 過擬合,而非 V38 真實的訊號**。
+更深一層的診斷顯示:**若以 baseline threshold 不 retune**(亦即不額外微調 5.5 段的 per-class threshold 倍數),V38 在 ensemble 中的 OOF gain 自 λ=0.05 起就轉負且越大越負——**證明那個看似漂亮的 +0.0031 OOF 主要來自 threshold retune 過擬合,而非 V38 模型本身的真實訊號**。
 
-### 6.4 Forensic Flip-to-LB 分析
+### 6.4 「Flip 數量」與「LB 損失」的相關性分析
 
-對歷次失敗 submission 與 best 進行逐 rally 比對：
+我們對歷次失敗 submission 與目前最佳提交檔進行**逐 rally 比對**(亦即比對每個 rally 的預測值差異,即所謂 flip):
 
 | Submission | 總 flip 數 | LB Δ | Loss per action flip |
 |---|---|---|---|
@@ -651,36 +639,15 @@ python scripts/run_full_pipeline.py --figures
 
 - 主辦單位 (2026). *Reference_Only_Old_Test_Data/test.csv*. 2026-05-21 公告開放使用。AI CUP 2026 春季賽競賽平台。
 
-### 軟體與工具
-
-- Paszke, A., Gross, S., Massa, F., et al. (2019). *PyTorch: An imperative style, high-performance deep learning library*. Advances in Neural Information Processing Systems, 32.
-
-- Pedregosa, F., Varoquaux, G., Gramfort, A., et al. (2011). *Scikit-learn: Machine learning in Python*. Journal of Machine Learning Research, 12, 2825–2830.
-
-- Chen, T., & Guestrin, C. (2016). *XGBoost: A scalable tree boosting system*. In *Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining* (pp. 785–794). https://doi.org/10.1145/2939672.2939785
-
-- Prokhorenkova, L., Gusev, G., Vorobev, A., Dorogush, A. V., & Gulin, A. (2018). *CatBoost: Unbiased boosting with categorical features*. Advances in Neural Information Processing Systems, 31.
-
 ### 關鍵演算法參考文獻
 
-- Lin, T.-Y., Goyal, P., Girshick, R., He, K., & Dollár, P. (2017). *Focal loss for dense object detection*. In *IEEE International Conference on Computer Vision* (pp. 2980–2988). https://doi.org/10.1109/ICCV.2017.324
-  — 本系統 V25-A 與 V27 的 action head 主損失。
+- Devlin, J., Chang, M.-W., Lee, K., & Toutanova, K. (2019). BERT: Pre-training of deep bidirectional transformers for language understanding. In *Proceedings of NAACL-HLT 2019* (Vol. 1, pp. 4171–4186). Association for Computational Linguistics. https://doi.org/10.18653/v1/N19-1423
 
-- Devlin, J., Chang, M.-W., Lee, K., & Toutanova, K. (2019). *BERT: Pre-training of deep bidirectional transformers for language understanding*. In *NAACL-HLT* (pp. 4171–4186). https://doi.org/10.18653/v1/N19-1423
-  — MLM SSL pretrain 機制之源頭。
+- Hochreiter, S., & Schmidhuber, J. (1997). Long short-term memory. *Neural Computation*, *9*(8), 1735–1780. https://doi.org/10.1162/neco.1997.9.8.1735
 
-- Wang, W.-Y., Shuai, H.-H., Chang, K.-S., & Peng, W.-C. (2022). *ShuttleNet: Position-aware fusion of rally progress and player styles for stroke forecasting in badminton*. In *Proceedings of the AAAI Conference on Artificial Intelligence*, 36(4), 4523–4531.
-  — 本系統 opponent-pair LOO context 設計之啟發來源,但機制（確定性非參數聚合）與 ShuttleNet（可訓練 player style embedding）顯著不同。
+- Lin, T.-Y., Goyal, P., Girshick, R., He, K., & Dollár, P. (2017). Focal loss for dense object detection. In *Proceedings of the IEEE International Conference on Computer Vision* (pp. 2980–2988). https://doi.org/10.1109/ICCV.2017.324
 
-- Hochreiter, S., & Schmidhuber, J. (1997). *Long short-term memory*. Neural Computation, 9(8), 1735–1780. https://doi.org/10.1162/neco.1997.9.8.1735
-
-### 生成式 AI 工具揭露
-
-- Anthropic. (2026). *Claude (Opus 4.7)*. https://www.anthropic.com/claude
-  — 程式輔助、實驗分析、報告草稿撰寫。
-
-- OpenAI. (2026). *Codex (CLI agent)*. https://github.com/openai/codex
-  — 程式輔助、機制 audit 設計協作。
+- Wang, W.-Y., Shuai, H.-H., Chang, K.-S., & Peng, W.-C. (2022). ShuttleNet: Position-aware fusion of rally progress and player styles for stroke forecasting in badminton. *Proceedings of the AAAI Conference on Artificial Intelligence*, *36*(4), 4523–4531. https://doi.org/10.1609/aaai.v36i4.20374
 
 ---
 
