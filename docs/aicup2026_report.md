@@ -144,7 +144,7 @@ flowchart TD
 
 #### Step 3：SSL-Pretrained BiLSTM(本系統最重要的部分)
 
-一個 1 層、hidden=128 的 **雙向 LSTM**(BiLSTM),每個 stroke 輸出 256 維 hidden state(雙向各 128 拼接)。關鍵點:**這個 LSTM 不是隨機初始化,而是先在羽球資料 ShuttleSet22 上以 MLM 預訓練 30 epochs**,讓它先掌握「球類運動 rally 序列中前後拍如何相互影響」這個通用模式,再 transfer 到桌球 fine-tune。在 14k 樣本規模下 LSTM 的 inductive bias 較 Transformer 強、過擬合風險較低。
+一個 1 層、hidden=128 的 **雙向 LSTM**(BiLSTM),每個 stroke 輸出 256 維 hidden state(雙向各 128 拼接)。關鍵點:**這個 LSTM 不是隨機初始化,而是先在羽球資料 ShuttleSet22 上以 MLM 預訓練 30 epochs**,讓它先掌握「球類運動 rally 序列中前後拍如何相互影響」這個通用模式,再 transfer 到桌球 fine-tune。在 14k 樣本下 LSTM 的 inductive bias 較 Transformer 強、過擬合風險較低。
 
 #### Step 4：Last Visible Stroke + Opp-pair Context 拼接
 
@@ -152,13 +152,17 @@ flowchart TD
 
 #### Step 5：三個並行任務頭
 
-三個獨立的 `Linear` head 共用 encoder 輸入,各自負責一個任務:
+三個獨立的 `Linear` head 共用 encoder 輸入,各自負責一個任務,輸出維度對應該任務的類別數:
 
-- **Action Head**: `Linear(314 → 19)` + softmax,對非首拍位置強制 mask 掉 serve 類(class 15-18)。**把桌球規則「發球僅出現在第一拍」寫進模型**,避免「下一拍」被預測為發球。
-- **Point Head**: `Linear(314 → 10)` + softmax → 10 類落點機率。
-- **Winner Head**: `Linear(314 → 1)` + sigmoid → 發球者贏得本回合的機率。
+| Head | 線性變換 | 啟動函數 | 輸出 |
+|---|---|---|---|
+| **Action Head** | `Linear(314 → 19)` | softmax | 19 類球種(actionId)機率 |
+| **Point Head** | `Linear(314 → 10)` | softmax | 10 類落點(pointId)機率 |
+| **Winner Head** | `Linear(314 → 1)` | sigmoid | 發球者贏得本回合的機率 |
 
-模型總參數量約 **0.34M**。在 14k 樣本 + 43.7% cold-start 的限制下,**「小模型 + 強 inductive bias + 跨運動預訓練」**是核心設計哲學,大模型反而容易過擬合 train 分布而在 OOD test 崩潰。
+**Action Head 對非首拍位置強制 mask 掉 serve 類(class 15-18)**,把桌球規則「發球僅出現在第一拍」寫進模型。
+
+模型總參數量約 **0.34M**。在 14k 樣本 + 43.7% cold-start 的限制下,**「小模型 + 強 inductive bias + 跨運動預訓練」**是核心設計哲學。
 
 ### 2.3 損失函數設計
 
