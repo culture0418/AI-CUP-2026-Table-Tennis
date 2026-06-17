@@ -363,14 +363,16 @@ Per-class threshold tune:
 完整 from-scratch 流程約 4-6 小時（1×RTX 4090）：
 
 ```bash
-python scripts/v27_oldleak_full_pipeline.py
+python scripts/run_full_pipeline.py
 ```
 
-於 cached bags 條件下重現約 25 秒（驗證已通過 MD5 bit-identical check）：
+於 cached bags 條件下重現約 25 秒（已通過 MD5 bit-identical check）：
 
 ```bash
-python scripts/v27_oldleak_full_pipeline.py --skip-ssl --skip-bag
+python scripts/run_full_pipeline.py --skip-ssl --skip-bag
 ```
+
+系統按功能拆分為 `src/` 內的 8 個模組,單一入口 `scripts/run_full_pipeline.py` 為 orchestrator,依序呼叫 SSL pretrain → bag training → α-search ensemble → OLD lookup → MD5 驗證五個階段。各模組對應規範要求的「資料處理 / pretrain / training / 預測」職責分離,實作細節詳見柒段檔案結構。
 
 ---
 
@@ -512,52 +514,89 @@ V25-A 用 uniform label smoothing(class 3 標籤 90% 集中,其他 8 類各 1.1%
 
 **主要檔案結構：**
 
+系統按 AI CUP 規範「資料處理 / 訓練流程 / 預測」拆分,核心程式碼共 8 個 `src/` 模組(~1,593 行)加 1 個 orchestrator 入口(~85 行)。資料(8 MB)與 cache(301 MB,52 檔)皆內附於 repo,審查者下載後即可一鍵驗證。
+
 ```
-AI/
-├── CLAUDE.md                          競賽規則 + submit gate + dead-end 列表
-├── data/
-│   ├── train.csv                      14,995 rallies
-│   ├── test_new.csv                   1,845 rallies (no serverGetPoint)
-│   ├── test.csv                       OLD, 1,236 rallies w/ serverGetPoint
-│   └── external/shuttleset22/         ShuttleSet22 raw
+aicup2026_deliverable/
+├── README.md                              安裝/執行/I-O/合規說明
+├── requirements.txt                       Python 套件版本鎖定
+│
 ├── scripts/
-│   ├── v27_oldleak_full_pipeline.py   ⭐ Mode B canonical reproducer (best LB)
-│   ├── v27_modeA_full_pipeline.py     核心 hub: SSL pretrain + bag + ensemble
-│   ├── tt_lstm_ssl_full_pipeline.py   SSL pretrain on ShuttleSet22
-│   ├── v25a_full_pipeline.py          V25-A 標準 reproducer
-│   ├── train_v1_aug.py                v1 SSL+transductive bag
-│   ├── train_asym_aug.py              asym bag
-│   ├── audit_test_leakage.py          10 項 leakage 系統 audit
-│   └── ... (44 scripts total)
-├── cache/                              SSL encoder + per-seed bag .npz files
-├── submissions/                        所有歷次 submission CSV
+│   └── run_full_pipeline.py              ⭐ 唯一入口 (orchestrator, ~85 行)
+│
+├── src/                                   核心模組(按功能拆分)
+│   ├── config.py                         配置 — 路徑/超參數/常數
+│   ├── data_processing.py                資料處理 — 對手配對 LOO context
+│   ├── models.py                         模型架構 — SSLEncoderLSTM + TTSSLLSTMHier
+│   ├── losses.py                         損失 — FocalLoss + AsymSpatialFocalLoss
+│   ├── pretrain.py                       Stage 1 — ShuttleSet22 SSL pretrain
+│   ├── training.py                       Stage 4 — V25-A + V27 bag training
+│   ├── ensemble.py                       Stage 5 — α-search + threshold tune
+│   ├── validation.py                     Stage 5b + 6 — OLD lookup + MD5 verify
+│   └── figures.py                        6 張報告圖生成
+│
+├── data/                                  全部資料已內附 (~8 MB)
+│   ├── dataset_description.md            欄位定義
+│   ├── train.csv / test_new.csv / test.csv
+│   └── external/shuttleset22/train.csv   ShuttleSet22 羽球
+│
+├── cache/                                 全部 cache 已內附 (~301 MB, 52 檔)
+│   ├── ssl_lstm_encoder_shuttleset22.pt  SSL encoder
+│   ├── oof_test_v25a*.npz                V25-A bag (10 seeds)
+│   ├── oof_test_v27*.npz                 V27 bag (10 seeds)
+│   ├── oof_test_v38*.npz                 V38 bag (dead-end, 用於 fig 5)
+│   ├── oof_test_tt_shuttlenet*.npz       v1/asym bags (各 10 seeds)
+│   ├── oof_test_probs.npz                V3 baseline cascade
+│   └── consensus_microflip/summary.csv   診斷 summary
+│
+├── submissions/
+│   └── submission_v27_oldleak_20260525_0103.csv   ⭐ LB 0.4472604 提交檔 (MD5 對照)
+│
 └── docs/
-    ├── experiments.md                  完整實驗紀錄
-    ├── architecture_report.md          系統架構深度報告
-    └── aicup2026_report.md             本報告（中文）
+    ├── aicup2026_report.md               ⭐ 本報告
+    └── figures/                          報告陸段引用的 6 張圖
+        ├── fig1_v38_chain.png
+        ├── fig2_flip_vs_lb.png
+        ├── fig3_v25a_vs_v3_per_class.png
+        ├── fig4_asym_spatial_loss.png
+        ├── fig5_v38_perclass_delta.png
+        └── fig6_consensus_inversion.png
 ```
 
-**重現步驟（含 README.md 內容）：**
+**重現步驟（README.md 完整說明於 repo）：**
 
 ```bash
-# 環境
-Linux + Python 3.12 + PyTorch 2.x + CUDA
-pip install torch sklearn xgboost catboost pandas numpy
+# 1. 取得程式碼 + 全部資料 + cache
+git clone https://github.com/culture0418/AI-CUP-2026-Table-Tennis.git
+cd AI-CUP-2026-Table-Tennis
 
-# 確認資料就位
-ls data/train.csv data/test_new.csv data/test.csv
-ls data/external/shuttleset22/train.csv
+# 2. 環境
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt    # PyTorch 2.x + sklearn + xgboost + catboost
 
-# 完整從零重現（~4-6 小時 1×RTX 4090）
-python scripts/v27_oldleak_full_pipeline.py
+# 3. 快速驗證（從內附 cache,~25 秒,所有硬體保證 MD5 一致）
+python scripts/run_full_pipeline.py --skip-ssl --skip-bag
 
-# 從 cached bag 快速重現（~25 秒）
-python scripts/v27_oldleak_full_pipeline.py --skip-ssl --skip-bag
+# 4. 或完整從零重現（~4-6 小時 1×RTX 4090）
+python scripts/run_full_pipeline.py
 
-# 預期輸出
+# 5. (可選) 重新生成報告 6 張圖
+python scripts/run_full_pipeline.py --figures
+
+# 預期輸出（兩種模式皆然）：
 # submissions/submission_v27_oldleak_YYYYMMDD_HHMM.csv
 # MD5: c10097155c0942354f81ea188b43f111 ← bit-identical to LB 0.4472604
 ```
+
+**模組對應規範要求：**
+
+| 規範要求 | 對應模組 |
+|---|---|
+| 資料處理 | `src/data_processing.py`(對手配對 LOO context)+ `src/training.py` 內 closure(encode_df, build_rallies, sample_k, transductive aug) |
+| 訓練流程 — pretrain | `src/pretrain.py`(Stage 1 SSL on ShuttleSet22) |
+| 訓練流程 — training | `src/training.py`(Stage 4: V25-A + V27 bag,10 seeds × 5 folds × 30 epochs) |
+| 預測 | `src/ensemble.py`(Stage 5: α-search + threshold)+ `src/validation.py`(Stage 5b: OLD lookup,Stage 6: MD5 verify) |
+| README + I/O 說明 | `README.md`(repo 根目錄,涵蓋安裝、模組 I/O、Troubleshooting、合規) |
 
 ---
 
