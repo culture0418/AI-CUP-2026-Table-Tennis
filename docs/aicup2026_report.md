@@ -200,7 +200,7 @@ class 3 標籤分布：
 
 ## 參、創新性
 
-本系統之創新分為**七項對桌球任務量身設計的演算法層次創新**,以及**一套嚴謹的負結果驗證方法論**,兩者交叉支撐最終 LB 突破。
+本系統之創新分為**五項對桌球任務量身設計的演算法層次創新**,以及**一套嚴謹的負結果驗證方法論**,兩者交叉支撐最終 LB 突破。
 
 ### 3.1 跨運動 SSL 遷移（Cross-sport Transfer）
 
@@ -221,23 +221,15 @@ ctx = [ ego_pointId_freq(10) | ego_actionId_freq(19) |
 
 桌球落點 9 宮格 grid 中,**class 3 反手短球**是最稀少（訓練資料 0.9%）且最 tactical 的落點。我們將桌球專業判斷「相鄰落點戰術上可替代」編碼進 loss function,對 class 3 的 label distribution 做**空間鄰居非對稱平滑**——20% 機率質量散布於 row 鄰居（class 2）+ column 鄰居（class 6）。此為對域知識（domain knowledge）直接嵌入損失設計的具體實踐,於 V25-A 之上帶來 LB +0.0030（V25-A 0.3757 → V27 Mode A 0.3787）。
 
-### 3.4 V27 Mode A 雙取代集成
-
-於 v17 7-way / 8-way α-search 框架中,**同時取代 aug slot（V25-A）與 asym_aug slot（V27）**——兩個 components **共享相同架構但搭配不同 loss objective**。此設計捕捉「architecture invariance × loss diversity」維度,實測證實 loss-objective 多樣性帶來的集成增益（transfer ratio 0.68x,**3.5 倍**健康於單一 V25-A 的 0.19x）。
-
-### 3.5 Transductive Augmentation
+### 3.4 Transductive Augmentation
 
 利用桌球「同場比賽戰術一致性」觀察,將 test rallies（T≥2 strokes 已可見）直接加入 finetune training set——僅作為 input sequence（非 pseudo-labeling）。此機制與**hard pseudo-label**截然不同：不引入估計標籤,只擴大 encoder 對 test 球員當下狀態的接觸面。實驗顯示 OOF 僅 +0.0004 但 LB +0.0032(transfer 8x), 是少數 OOF 訊號被 LB 放大的成功 dim。
 
-### 3.6 V27 Mode A 雙頭通道 + Winner head α-search
-
-對 winner head（task 3）以 V3-Cat + v1(SSL-LSTM) 之 60/40 融合取代純 V3,捕捉 SSL pretrained encoder 對勝負判讀的稀疏訊號（OOF AUC +0.0028）。
-
-### 3.7 主辦核可外部資料的合規利用
+### 3.5 主辦核可外部資料的合規利用
 
 本系統最大單次 LB 突破（+0.0686）來自**完全合規的外部資料使用**：主辦單位 2026-05-21 公告 `Reference_Only_Old_Test_Data/test.csv` 為可用訓練資料。我們透過 10 項系統性 audit 確認其與 NEW test_new.csv 在 1,236 個重疊 rally 上**逐欄位 bit-identical**,僅多 `serverGetPoint` ground truth。據此實作直接 label lookup 注入,並維持模型端對 609 個 NEW-only rallies 的獨立預測。**此做法不涉及 test 反查、未違反任何競賽規則**,並保留純模型端 fallback（V27 Mode A,LB 0.3787）以備主辦方政策追溯調整。
 
-### 3.8 方法論創新：Submit Gate 與 Dead-end Exhaustion Protocol
+### 3.6 方法論創新：Submit Gate 與 Dead-end Exhaustion Protocol
 
 本團隊建立一套 `submit_gate` 規則（記錄於 `CLAUDE.md`）,以 **OOF transfer ratio × expected LB gain ≥ 0.001** 為提交門檻,避免將 noise band OOF 訊號浪費 LB quota。同時系統性記錄 **31+ 條已驗證的 dead-end**（含 V26 cross-attention、V37 Transformer add、V27-60ep、V38 head-decoupled adapters 五次架構整合崩盤,以及 consensus micro-flip、joint-pair decoder、V38 selective flip 等 OOF-mined 後處理嘗試）,並以 **forensic flip-to-LB 分析**揭示「flip 數與 LB 損失呈單調相關、loss-per-flip 遞增」的結構性規律。此方法論本身具報告層級價值,完整呈現「在小資料 + cold-start 任務上,bag-validated standalone improvement 不必然 transfer 至 OOD test」的核心 lesson。
 
@@ -258,11 +250,19 @@ ctx = [ ego_pointId_freq(10) | ego_actionId_freq(19) |
 
 ### 4.2 Cold-start 處理
 
-43.7% 測試球員（31/71）為 cold-start（訓練未見）。處理策略：
+測試集中有 31 位球員(占 71 位中的 **43.7%**)在訓練集從未出現過,我們稱這類球員為 **cold-start**(模型初次接觸)。針對此問題設計三項處理策略:
 
-1. **Vocabulary 從 train + test_new 聯集建立**,確保 test 中所有 player ID 有 vocab token。
-2. **OOV token（ID=1）保留**,對 train+test 聯集仍未涵蓋之罕見值映射至此。
-3. **Player masking**：訓練時以 p=0.30 隨機將 `gamePlayerId` / `gamePlayerOtherId` 替換為 OOV token,讓模型學習對 player ID 不可得的 fallback 預測。
+#### 策略 1：擴大「玩家編號對照表」
+
+神經網路只能處理數字,無法直接讀「玩家 ID」字串。**我們事先建立一張對照表(技術用語稱為 vocabulary,字典)把每個獨特玩家編號為一個整數。** 標準做法只用訓練集建表,則測試集出現的新玩家就沒有編號可用;**我們改成「訓練集 + 測試集」的玩家 ID 聯集一起建表**,確保測試集中每個球員(包括 cold-start)都有對應編號。此步驟只用 test 的玩家 ID,沒用 test 的標籤答案,符合競賽規則。
+
+#### 策略 2：保留「未知玩家」備用編號
+
+即使聯集已涵蓋大部分情形,仍可能遇到資料缺失值或意料外的新值。我們保留 **編號 ID=1 作為「未知值」備用編號**(技術用語稱為 OOV, Out-Of-Vocabulary,意指「對照表查不到的值」),找不到對照時統一映射到此,讓模型有備用輸入而不會出錯。
+
+#### 策略 3：訓練時隨機遮蔽玩家 ID(player masking)
+
+如果模型訓練時每次都看到完整玩家 ID,**會過度依賴 ID 來預測,測試遇到 cold-start 玩家就崩潰**。我們在訓練時對每一拍以 **30% 機率(p=0.30, 即「擲骰子有 30% 機率」)強制把玩家 ID 替換成「未知值」備用編號(OOV)**,等於告訴模型「**有 30% 的訓練樣本看不到玩家是誰,要學會用其他特徵(球種、落點、力道、旋轉)推理**」。這樣模型不再過度依賴玩家 ID,測試時遇到 cold-start 球員也能根據擊球風格推測下一拍。
 
 ### 4.3 Per-stroke 特徵編碼
 
@@ -278,20 +278,11 @@ ctx = [ ego_pointId_freq(10) | ego_actionId_freq(19) |
 
 ### 4.4 K-truncation Sampling（test-distribution-aware）
 
-訓練時對每個 rally 模擬「以前 k 個 stroke 預測第 k+1 拍」之 prediction setting,k 從 test 集的 truncation 分布中採樣（非均勻）：
-
-```python
-def sample_k(T, rng):
-    # test_k_dist 由 test_new.csv 各 rally 的最後可見 strikeNumber 分布建立
-    valid = test_k_dist[1:min(T, len_dist)]
-    return rng.choice(arange, p=valid/valid.sum())
-```
-
-此確保訓練的 k 分布與 test inference 條件一致,避免 distribution shift 於 sequence length 維度。
+訓練時對每個 rally 模擬「**以前 k 個 stroke 預測第 k+1 拍**」的預測情境。其中切點 k 並非均勻採樣,而是**從測試集的截斷分布抽樣**——具體做法:先統計 test_new.csv 中每個 rally 最後可見 stroke 位置(strikeNumber)的分布,訓練時依此分布權重抽 k。如此確保**訓練時看到的 k 分布與測試推論條件一致**,避免「sequence length 維度」的 distribution shift(訓練 k 分布跟 test 不同會讓模型在某些長度上 underfit)。
 
 ### 4.5 Transductive Augmentation
 
-test_new.csv 中 T≥2（可見至少 2 strokes）的 1,337 個 rally,於每個 fold 訓練時**加入 training set**——僅作為 input sequence（無 label）,於 BiLSTM encoder 上提供結構信號。屬於 transductive learning,非 pseudo-label。
+test_new.csv 中**可見至少 2 strokes 的 1,337 個 rally**,於每個 fold 訓練時加入 training set,**僅作為 input sequence(無 label)**,於 BiLSTM encoder 上提供結構信號,屬於 **transductive learning**(轉導式學習)。這跟 **pseudo-labeling**(用模型自己預測當假標籤再訓練)截然不同:我們**完全不引入任何估計標籤**,只擴大 encoder 對 test 球員當下擊球風格的接觸面,因此不違反「禁反查 test 答案」的比賽規則。
 
 ### 4.6 Opponent-Pair Context 預計算
 
@@ -310,10 +301,6 @@ test_new.csv 中 T≥2（可見至少 2 strokes）的 1,337 個 rally,於每個 
 ### 4.8 OLD test.csv 標籤合併
 
 讀入 `data/test.csv`,以 `rally_uid` 為 key 聚合 first stroke 的 `serverGetPoint`,構建 1,236-rally lookup dict。stage5 V27 Mode A submission 生成後,對 overlap rallies 直接覆寫 `serverGetPoint = OLD ground truth`,non-overlap rallies 保留模型預測。
-
-### 4.9 資料完整性驗證
-
-每次 submission 生成後,以 `stage6_verify` 進行 schema check（1845 rows、4 columns、actionId ∈ [0,18]、pointId ∈ [0,9]、serverGetPoint ∈ [0,1]、rally_uid unique）與 MD5 驗證（vs LB-submitted file)。重現驗證顯示從 cached bags 重新跑 stage5+5b+6 約 25 秒,**MD5 bit-identical**：`c10097155c0942354f81ea188b43f111`。
 
 ---
 
