@@ -424,7 +424,7 @@ python scripts/run_full_pipeline.py --skip-ssl --skip-bag
 | 2026-05-20 | V27 Mode A | 0.3787 | +0.0030 | + AsymSpatial loss (class 3 spatial smoothing) |
 | **2026-05-25** | **v27_oldleak ★** | **0.4472604** | **+0.0686** | **+ OLD test.csv winner lookup（主辦核可）** |
 
-純模型側累積增益 +0.0139,外部資料注入 +0.0686,**合計 +0.0823 over V3 baseline**。
+純模型側累積增益 **+0.0139**,外部資料注入 **+0.0686**,相對 V3 baseline 之累積總提升為 **+0.0823**。
 
 ### 6.2 各 working dimension 的貢獻
 
@@ -457,13 +457,13 @@ python scripts/run_full_pipeline.py --skip-ssl --skip-bag
 
 ![Fig 1](figures/fig1_v38_chain.png)
 
-更深一層的診斷顯示:**若以 baseline threshold 不 retune**(亦即不額外微調 5.5 段的 per-class threshold 倍數),V38 在 ensemble 中的 OOF gain 自 λ=0.05 起就轉負且越大越負——**證明那個看似漂亮的 +0.0031 OOF 主要來自 threshold retune 過擬合,而非 V38 模型本身的真實訊號**。
+更深一層的診斷顯示:**若沿用基線之 threshold 倍數而不額外二次 retune**(亦即不對 5.5 段所述之 per-class 倍數做額外微調),V38 在 ensemble 中的 OOF gain 自 λ=0.05 起即轉為負值且越大越負——**證明那個看似漂亮的 +0.0031 OOF gain 主要來自 threshold retune 之過擬合,而非 V38 模型本身的真實訊號**。
 
 ### 6.4 「Flip 數量」與「LB 損失」的相關性分析
 
 我們對歷次失敗 submission 與目前最佳提交檔進行**逐 rally 比對**(亦即比對每個 rally 的預測值差異,即所謂 flip):
 
-| Submission | 總 flip 數 | LB Δ | Loss per action flip |
+| Submission | 總 flip 數 | LB Δ | 每 action flip 之 LB 損失 |
 |---|---|---|---|
 | V25A60 | 31 | -0.00012 | — |
 | V37 | 421 | -0.0081 | 0.043 |
@@ -471,12 +471,12 @@ python scripts/run_full_pipeline.py --skip-ssl --skip-bag
 | V27-60 modeA | 477 | -0.0111 | 0.054 |
 | V38 | 504 | -0.0196 | **0.088** |
 
-**Flip 數與 LB 損失單調相關,且 loss-per-flip 隨架構新穎度遞增**——表示模型越激進地與 best 分歧,每個 flip 越可能是錯的。此規律推導出兩個關鍵洞察：
+**Flip 數與 LB 損失呈單調相關,且每 flip 之平均損失隨架構新穎度遞增**——表示模型越激進地與 best 分歧,每個 flip 越可能是錯的。此規律推導出兩個關鍵洞察：
 
 1. **best 在 action/point 上接近 local optimum**,任何分歧空間統計上淨負。
 2. **flip% 是比 OOF 更可靠的 LB 風險訊號**——V38 之 action 12.09% / point 15.23% flips 即可預測其崩盤幅度。
 
-**圖 2：Flip 數與 LB 損失單調相關,且每 flip 損失隨架構新穎度遞增**
+**圖 2:Flip 數與 LB 損失呈單調相關,且每 flip 之平均損失隨架構新穎度遞增**
 
 ![Fig 2](figures/fig2_flip_vs_lb.png)
 
